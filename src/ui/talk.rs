@@ -216,60 +216,82 @@ pub fn draw_result_confirm<D: DrawTarget<Color = Rgb565, Error = impl core::fmt:
     );
 }
 
-/// 約1秒間サンプリングし、振った勢い・激しさを反映した 1〜9999 の数値を返す
 pub fn sample_tonaeru(board: &mut Board, accel_offset: (f32, f32, f32)) -> (i32, i32, i32) {
-    let mut energy_x = 0.0f32;
-    let mut energy_y = 0.0f32;
-    let mut energy_z = 0.0f32;
+    let mut max_diff_x = 0.0f32;
+    let mut max_diff_y = 0.0f32;
+    let mut max_diff_z = 0.0f32;
 
-    let mut prev_x = accel_offset.0;
-    let mut prev_y = accel_offset.1;
-    let mut prev_z = accel_offset.2;
+    let mut max_jerk_x = 0.0f32;
+    let mut max_jerk_y = 0.0f32;
+    let mut max_jerk_z = 0.0f32;
 
-    // 約3秒間 (10ms × 100回) サンプリング
-    for _ in 0..100 {
+    // 初期値を None にして、1回目のループで実測値を入れる（初期ズレ誤検知の防止）
+    let mut prev_accel: Option<(f32, f32, f32)> = None;
+
+    // 10ms × 150回 ＝ 1.5秒間サンプリング
+    for _ in 0..150 {
         if let Ok(a) = board.accelerometer.accel_norm() {
-            // 基準値(accel_offset)からのズレの大きさ（絶対値）
-            let dx = (a.x - accel_offset.0).abs();
-            let dy = (a.y - accel_offset.1).abs();
-            let dz = (a.z - accel_offset.2).abs();
+            // ① 基準値（静止時）からの絶対ズレ量
+            let diff_x = (a.x - accel_offset.0).abs();
+            let diff_y = (a.y - accel_offset.1).abs();
+            let diff_z = (a.z - accel_offset.2).abs();
 
-            // 直前フレームからの急激な変化量（一気に振ったときの衝撃）
-            let jerk_x = (a.x - prev_x).abs();
-            let jerk_y = (a.y - prev_y).abs();
-            let jerk_z = (a.z - prev_z).abs();
+            if diff_x > max_diff_x { max_diff_x = diff_x; }
+            if diff_y > max_diff_y { max_diff_y = diff_y; }
+            if diff_z > max_diff_z { max_diff_z = diff_z; }
 
-            // 振れば振るほどエネルギーが加算（積算）される
-            energy_x += dx + jerk_x * 1.5;
-            energy_y += dy + jerk_y * 1.5;
-            energy_z += dz + jerk_z * 1.5;
+            // ② 直前フレームからの変化量（Jerk）
+            if let Some((px, py, pz)) = prev_accel {
+                let jerk_x = (a.x - px).abs();
+                let jerk_y = (a.y - py).abs();
+                let jerk_z = (a.z - pz).abs();
 
-            prev_x = a.x;
-            prev_y = a.y;
-            prev_z = a.z;
+                if jerk_x > max_jerk_x { max_jerk_x = jerk_x; }
+                if jerk_y > max_jerk_y { max_jerk_y = jerk_y; }
+                if jerk_z > max_jerk_z { max_jerk_z = jerk_z; }
+            }
+
+            prev_accel = Some((a.x, a.y, a.z));
         }
         board.delay.delay_ms(10u16);
     }
 
     // -------------------------------------------------------------
-    // あまり（剰余）を使った 1〜9999 のスケーリング計算
+    // スケーリング計算
     // -------------------------------------------------------------
-    let calc_value = |energy: f32, axis_seed: u32| -> i32 {
-        // 微小な変化でも全体が大きく動くよう、エネルギーに素数系の大きめの係数を掛ける
-        // axis_seed を使って軸ごとに異なるオフセットを与える
-        let raw = (energy * 1234.567 + (axis_seed * 997) as f32) as u32;
+    let calc_value = |max_diff: f32, max_jerk: f32, axis_seed: u32| -> i32 {
+        // ★ diff（振りの大きさ）を主軸にし、jerk（衝撃）の比率を下げる
+        // これにより「手ブレ」で跳ね上がるのを防ぐ
+        let swing_score = (max_diff * 1.5) + (max_jerk * 0.8);
 
-        // 10000 のあまりを取ることで 0 〜 9999 に収める
-        // 1桁(0〜9)、2桁(10〜99)、3桁(100〜999)、4桁(1000〜9999) が均等に現れる
-        let rem = (raw % 10000) as i32;
+        // デッドゾーン：持っているだけの手ブレ（スコア 0.35 未満）は 1桁（1〜9）
+        if swing_score < 0.35 {
+            let seed_hash = (axis_seed * 17 + (max_diff * 100.0) as u32) % 9 + 1;
+            return seed_hash as i32;
+        }
 
-        // 0を避けて 1〜9999 に補正
-        if rem == 0 { 1 } else { rem }
+        // 正規化レンジ: 0.35 〜 6.0（持っているだけでは届かないが、振れば順調に伸びる範囲）
+        let norm = ((swing_score - 0.35) / 5.65).clamp(0.0, 1.0);
+
+        // 1.3乗カーブで「弱〜中振り」の差を出しやすくする
+        let curve = libm::powf(norm, 1.3);
+
+        // ベース値（100 〜 8800）
+        let base_value = 100.0 + (curve * 8700.0);
+
+        // ハッシュノイズ（乗算ノイズ 0.85 〜 1.15 の抑えめな揺らぎ）
+        let bits = (swing_score * 100000.0) as u32 ^ (axis_seed * 0x9E3779B9);
+        let hash = bits.wrapping_mul(0x85ebca6b) ^ (bits >> 13);
+        let noise_factor = 0.85 + ((hash % 300) as f32 / 1000.0);
+
+        let final_val = (base_value * noise_factor) as i32;
+
+        final_val.clamp(1, 9999)
     };
 
-    let x = calc_value(energy_x, 1);
-    let y = calc_value(energy_y, 2);
-    let z = calc_value(energy_z, 3);
+    let x = calc_value(max_diff_x, max_jerk_x, 1);
+    let y = calc_value(max_diff_y, max_jerk_y, 2);
+    let z = calc_value(max_diff_z, max_jerk_z, 3);
 
     (x, y, z)
 }
