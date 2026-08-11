@@ -65,6 +65,17 @@ where
             None
         }
     }
+
+    pub fn is_pressed(&self, last_direction: &mut Option<Direction>) -> Option<Direction> {
+        let current_direction = self.read();
+        let pressed_direction = if current_direction.is_some() && last_direction.is_none() {
+            current_direction
+        } else {
+            None
+        };
+        *last_direction = current_direction;
+        pressed_direction
+    }
 }
 
 /// 上部ボタンA/B/Cのラッパー
@@ -101,5 +112,16 @@ where
         } else {
             None
         }
+    }
+
+    pub fn is_pressed(&self, last_button: &mut Option<ButtonId>) -> Option<ButtonId> {
+        let current_button = self.read();
+        let pressed_button = if current_button.is_some() && last_button.is_none() {
+            current_button
+        } else {
+            None
+        };
+        *last_button = current_button;
+        pressed_button
     }
 }

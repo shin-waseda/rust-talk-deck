@@ -42,20 +42,17 @@ pub fn run(board: &mut Board) -> ! {
     loop {
         match state {
             AppState::Menu => {
-                let direction = board.five_way.read();
-                let is_new_press = direction.is_some() && last_direction.is_none();
-
-                if is_new_press {
+                if let Some(direction) = board.five_way.is_pressed(&mut last_direction) {
                     match direction {
-                        Some(Direction::Up) => {
+                        Direction::Up => {
                             cursor = if cursor == 0 { MENU_ITEMS.len() - 1 } else { cursor - 1 };
                             menu::draw_menu(&mut board.display, cursor);
                         }
-                        Some(Direction::Down) => {
+                        Direction::Down => {
                             cursor = (cursor + 1) % MENU_ITEMS.len();
                             menu::draw_menu(&mut board.display, cursor);
                         }
-                        Some(Direction::Press) => {
+                        Direction::Press => {
                             state = AppState::MenuConfirm;
                             confirm_cursor = 0;
                             menu::draw_menu(&mut board.display, cursor);
@@ -64,7 +61,6 @@ pub fn run(board: &mut Board) -> ! {
                         _ => {}
                     }
                 }
-                last_direction = direction;
             }
 
             AppState::MenuConfirm => {
@@ -122,54 +118,39 @@ pub fn run(board: &mut Board) -> ! {
                 last_direction = direction;
             }
 
+            // --- 各画面個別の処理 ---
             AppState::Talk => {
-                buf.clear();
-                match board.accelerometer.accel_norm() {
-                    Ok(a) => {
-                        let rel_x = a.x - accel_offset.0;
-                        let rel_y = a.y - accel_offset.1;
-                        let rel_z = a.z - accel_offset.2;
-                        let _ = write!(buf, "x:{:.2} y:{:.2} z:{:.2}", rel_x, rel_y, rel_z);
-                    }
-                    Err(_) => {
-                        let _ = write!(buf, "read error");
-                    }
-                }
-                talk::draw_accel_value(&mut board.display, &buf);
+                talk::update_talk_screen(board, accel_offset, &mut buf);
 
-                let button = board.top_buttons.read();
-                let is_new_button = button.is_some() && last_button.is_none();
-                if is_new_button && button == Some(ButtonId::A) {
+                if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::A) {
                     state = AppState::Menu;
                     menu::draw_menu(&mut board.display, cursor);
                 }
-                last_button = button;
             }
 
-            // --- 各画面個別の処理 ---
             AppState::Status => {
-                if tick_status(board, &mut last_button) {
+                if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::A) {
                     state = AppState::Menu;
                     menu::draw_menu(&mut board.display, cursor);
                 }
             }
 
             AppState::Magic => {
-                if tick_magic(board, &mut last_button) {
+                if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::A) {
                     state = AppState::Menu;
                     menu::draw_menu(&mut board.display, cursor);
                 }
             }
 
             AppState::Item => {
-                if tick_item(board, &mut last_button) {
+                if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::A) {
                     state = AppState::Menu;
                     menu::draw_menu(&mut board.display, cursor);
                 }
             }
 
             AppState::Escape => {
-                if tick_escape(board, &mut last_button) {
+                if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::A) {
                     state = AppState::Menu;
                     menu::draw_menu(&mut board.display, cursor);
                 }
@@ -183,35 +164,3 @@ pub fn run(board: &mut Board) -> ! {
 // ==========================================
 // 各画面ごとの個別処理 (空箱関数)
 // ==========================================
-
-fn tick_status(board: &mut Board, last_button: &mut Option<ButtonId>) -> bool {
-    // ここに「じょうたい」画面独自の入力・更新処理を書いていく
-    let button = board.top_buttons.read();
-    let is_new_button = button.is_some() && *last_button == None;
-    *last_button = button;
-    is_new_button && button == Some(ButtonId::A) // true でメニューに戻る
-}
-
-fn tick_magic(board: &mut Board, last_button: &mut Option<ButtonId>) -> bool {
-    // ここに「まほう」画面独自の入力・更新処理を書いていく
-    let button = board.top_buttons.read();
-    let is_new_button = button.is_some() && *last_button == None;
-    *last_button = button;
-    is_new_button && button == Some(ButtonId::A)
-}
-
-fn tick_item(board: &mut Board, last_button: &mut Option<ButtonId>) -> bool {
-    // ここに「どうぐ」画面独自の入力・更新処理を書いていく
-    let button = board.top_buttons.read();
-    let is_new_button = button.is_some() && *last_button == None;
-    *last_button = button;
-    is_new_button && button == Some(ButtonId::A)
-}
-
-fn tick_escape(board: &mut Board, last_button: &mut Option<ButtonId>) -> bool {
-    // ここに「にげる」画面独自の入力・更新処理を書いていく
-    let button = board.top_buttons.read();
-    let is_new_button = button.is_some() && *last_button == None;
-    *last_button = button;
-    is_new_button && button == Some(ButtonId::A)
-}
