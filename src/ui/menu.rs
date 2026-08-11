@@ -9,7 +9,7 @@ use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
 use super::{clear_screen, JP_FONT};
 
-pub const MENU_ITEMS: [&str; 5] = ["加速度センサー", "ステータス", "まほう", "どうぐ", "にげる"];
+pub const MENU_ITEMS: [&str; 5] = ["はなす", "ステータス", "まほう", "どうぐ", "にげる"];
 
 pub fn draw_splash<D: DrawTarget<Color = Rgb565>>(display: &mut D) {
     clear_screen(display);
@@ -67,6 +67,64 @@ pub fn draw_selected<D: DrawTarget<Color = Rgb565, Error = impl core::fmt::Debug
         VerticalPosition::Top,
         HorizontalAlignment::Left,
         FontColor::Transparent(Rgb565::YELLOW),
+        display,
+    );
+}
+
+pub fn draw_confirm_dialog<D: DrawTarget<Color = Rgb565, Error = impl core::fmt::Debug>>(
+    display: &mut D,
+    item_name: &str,
+    confirm_cursor: usize, // 0: はい, 1: いいえ
+) {
+    let dialog_style = PrimitiveStyleBuilder::new()
+        .stroke_color(Rgb565::WHITE)
+        .stroke_width(2)
+        .fill_color(Rgb565::BLACK)
+        .build();
+    let _ = Rectangle::with_corners(Point::new(30, 150), Point::new(290, 225))
+        .into_styled(dialog_style)
+        .draw(display);
+
+    let text_style = MonoTextStyle::new(&FONT_9X15, Rgb565::WHITE);
+    let _ = JP_FONT.render_aligned(
+        item_name,
+        Point::new(45, 160),
+        VerticalPosition::Top,
+        HorizontalAlignment::Left,
+        FontColor::Transparent(Rgb565::CYAN),
+        display,
+    );
+    let _ = JP_FONT.render_aligned(
+        "にしますか？",
+        Point::new(45 + (item_name.len() as i32 * 8), 160), // 文字列長に合わせてオフセット
+        VerticalPosition::Top,
+        HorizontalAlignment::Left,
+        FontColor::Transparent(Rgb565::WHITE),
+        display,
+    );
+
+    let yes_cursor = if confirm_cursor == 0 { ">" } else { " " };
+    let no_cursor  = if confirm_cursor == 1 { ">" } else { " " };
+
+    let _ = Text::with_baseline(yes_cursor, Point::new(80, 195), text_style, Baseline::Top)
+        .draw(display);
+    let _ = JP_FONT.render_aligned(
+        "はい",
+        Point::new(95, 195),
+        VerticalPosition::Top,
+        HorizontalAlignment::Left,
+        FontColor::Transparent(Rgb565::WHITE),
+        display,
+    );
+
+    let _ = Text::with_baseline(no_cursor, Point::new(180, 195), text_style, Baseline::Top)
+        .draw(display);
+    let _ = JP_FONT.render_aligned(
+        "いいえ",
+        Point::new(195, 195),
+        VerticalPosition::Top,
+        HorizontalAlignment::Left,
+        FontColor::Transparent(Rgb565::WHITE),
         display,
     );
 }

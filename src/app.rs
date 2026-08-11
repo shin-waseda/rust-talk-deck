@@ -12,6 +12,7 @@ use crate::ui::menu::{self, MENU_ITEMS};
 #[derive(Clone, Copy, PartialEq)]
 enum AppState {
     Menu,
+    MenuConfirm, 
     Accel,
 }
 
@@ -25,6 +26,7 @@ pub fn run(board: &mut Board) -> ! {
     }
 
     let mut cursor: usize = 0;
+    let mut confirm_cursor: usize = 0; 
     let mut state = AppState::Menu;
     let mut last_direction: Option<Direction> = None;
     let mut last_button: Option<ButtonId> = None;
@@ -50,15 +52,48 @@ pub fn run(board: &mut Board) -> ! {
                             menu::draw_menu(&mut board.display, cursor);
                         }
                         Some(Direction::Press) => {
-                            if cursor == 0 {
-                                state = AppState::Accel;
-                                accel::draw_accel_screen(&mut board.display);
+                            state = AppState::MenuConfirm;
+                            confirm_cursor = 0;
+                            menu::draw_menu(&mut board.display, cursor);
+                            menu::draw_confirm_dialog(&mut board.display, MENU_ITEMS[cursor], confirm_cursor);
+                        }
+                        _ => {}
+                    }
+                }
+                last_direction = direction;
+            }
 
-                                if let Ok(a) = board.accelerometer.accel_norm() {
-                                    accel_offset = (a.x, a.y, a.z);
+            AppState::MenuConfirm => {
+                let direction = board.five_way.read();
+                let is_new_press = direction.is_some() && last_direction.is_none();
+
+                if is_new_press {
+                    match direction {
+                        Some(Direction::Left) | Some(Direction::Up) => {
+                            confirm_cursor = 0;
+                            menu::draw_menu(&mut board.display, cursor);
+                            menu::draw_confirm_dialog(&mut board.display, MENU_ITEMS[cursor], confirm_cursor);
+                        }
+                        Some(Direction::Right) | Some(Direction::Down) => {
+                            confirm_cursor = 1;
+                            menu::draw_menu(&mut board.display, cursor);
+                            menu::draw_confirm_dialog(&mut board.display, MENU_ITEMS[cursor], confirm_cursor);
+                        }
+                        Some(Direction::Press) => {
+                            if confirm_cursor == 0 {
+                                if cursor == 0 {
+                                    state = AppState::Accel;
+                                    accel::draw_accel_screen(&mut board.display);
+                                    if let Ok(a) = board.accelerometer.accel_norm() {
+                                        accel_offset = (a.x, a.y, a.z);
+                                    }
+                                } else {
+                                    state = AppState::Menu;
+                                    menu::draw_menu(&mut board.display, cursor);
                                 }
                             } else {
-                                menu::draw_selected(&mut board.display, cursor);
+                                state = AppState::Menu;
+                                menu::draw_menu(&mut board.display, cursor);
                             }
                         }
                         _ => {}
