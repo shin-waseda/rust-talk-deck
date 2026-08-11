@@ -1,4 +1,4 @@
-use crate::controls::{FiveWaySwitch, TopButtons};
+use crate::drivers::controls::{FiveWaySwitch, TopButtons};
 use panic_halt as _;
 use wio_terminal as wio;
 use wio::hal::clock::GenericClockController;
