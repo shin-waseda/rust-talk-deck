@@ -1,4 +1,3 @@
-use core::fmt::Write;
 use heapless::String;
 
 use wio_terminal::accelerometer::Accelerometer;
@@ -6,29 +5,12 @@ use wio_terminal::prelude::*;
 
 use crate::drivers::board::Board;
 use crate::drivers::controls::{ButtonId, Direction};
+use crate::model::{Event, Model, Screen, TalkState};
 use crate::ui::menu::{self, MENU_ITEMS};
 use crate::ui::{escape, item, magic, status, talk};
 
-#[derive(Clone, Copy, PartialEq)]
-enum AppState {
-    Menu,
-    MenuConfirm,
-    Talk,
-    Status,
-    Magic,
-    Item,
-    Escape,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum TalkState {
-    WazaMenu,
-    Miru,
-    TonaeruResult,
-    TonaeruConfirm,
-}
-
 pub fn run(board: &mut Board) -> ! {
+    // スプラッシュ待機処理
     menu::draw_splash(&mut board.display);
     while board.five_way.read().is_none() {
         board.delay.delay_ms(30u16);
@@ -37,262 +19,156 @@ pub fn run(board: &mut Board) -> ! {
         board.delay.delay_ms(30u16);
     }
 
-    let mut cursor: usize = 0;
-    let mut confirm_cursor: usize = 0;
-    let mut state = AppState::Menu;
+    let mut model = Model::new();
     let mut last_direction: Option<Direction> = None;
     let mut last_button: Option<ButtonId> = None;
     let mut buf: String<64> = String::new();
-    let mut accel_offset = (0.0f32, 0.0f32, 0.0f32);
-    let mut talk_state = TalkState::WazaMenu;
-    let mut waza_cursor: usize = 0;
-    let mut result_confirm_cursor: usize = 0;
-    let mut tonaeru_result = (0i32, 0i32, 0i32);
 
-    menu::draw_menu(&mut board.display, cursor);
+    // 初回描画
+    render(board, &model, &mut buf);
 
     loop {
-        match state {
-            AppState::Menu => {
-                if let Some(direction) = board.five_way.is_pressed(&mut last_direction) {
-                    match direction {
-                        Direction::Up => {
-                            cursor = if cursor == 0 { MENU_ITEMS.len() - 1 } else { cursor - 1 };
-                            menu::draw_menu(&mut board.display, cursor);
-                        }
-                        Direction::Down => {
-                            cursor = (cursor + 1) % MENU_ITEMS.len();
-                            menu::draw_menu(&mut board.display, cursor);
-                        }
-                        Direction::Press => {
-                            state = AppState::MenuConfirm;
-                            confirm_cursor = 0;
-                            menu::draw_menu(&mut board.display, cursor);
-                            menu::draw_confirm_dialog(&mut board.display, MENU_ITEMS[cursor], confirm_cursor);
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(button) = board.top_buttons.is_pressed(&mut last_button) {
-                    if button == ButtonId::B {
-                        cursor = (cursor + 1) % MENU_ITEMS.len();
-                        menu::draw_menu(&mut board.display, cursor);
-                    } else if button == ButtonId::A {
-                        state = AppState::MenuConfirm;
-                        confirm_cursor = 0;
-                        menu::draw_menu(&mut board.display, cursor);
-                        menu::draw_confirm_dialog(&mut board.display, MENU_ITEMS[cursor], confirm_cursor);
-                    }
-                }
-            }
+        // 1. 入力をイベントに変換
+        let event = poll_input(board, &mut last_direction, &mut last_button);
 
-            AppState::MenuConfirm => {
-                let direction = board.five_way.read();
-                let is_new_press = direction.is_some() && last_direction.is_none();
+        // 2. モデル更新と副作用の実行
+        if let Some(ev) = event {
+            let prev_screen = model.screen; // ★ 更新前の画面を保持
 
-                if is_new_press {
-                    match direction {
-                        Some(Direction::Left) | Some(Direction::Up) => {
-                            confirm_cursor = 0;
-                            menu::draw_menu(&mut board.display, cursor);
-                            menu::draw_confirm_dialog(&mut board.display, MENU_ITEMS[cursor], confirm_cursor);
-                        }
-                        Some(Direction::Right) | Some(Direction::Down) => {
-                            confirm_cursor = 1;
-                            menu::draw_menu(&mut board.display, cursor);
-                            menu::draw_confirm_dialog(&mut board.display, MENU_ITEMS[cursor], confirm_cursor);
-                        }
-                        Some(Direction::Press) => {
-                            if confirm_cursor == 0 {
-                                match cursor {
-                                    0 => {
-                                        if let Ok(a) = board.accelerometer.accel_norm() {
-                                            accel_offset = (a.x, a.y, a.z);
-                                        }
-                                        waza_cursor = 0;
-                                        talk_state = TalkState::WazaMenu;
-                                        // わざ画面全体を描画
-                                        talk::draw_talk_screen(&mut board.display, waza_cursor, None, None);
-                                        state = AppState::Talk;
-                                    }
-                                    1 => {
-                                        status::draw(&mut board.display);
-                                        state = AppState::Status;
-                                    }
-                                    2 => {
-                                        magic::draw(&mut board.display);
-                                        state = AppState::Magic;
-                                    }
-                                    3 => {
-                                        item::draw(&mut board.display);
-                                        state = AppState::Item;
-                                    }
-                                    _ => {
-                                        escape::draw(&mut board.display);
-                                        board.delay.delay_ms(2000u16);
-                                        cortex_m::peripheral::SCB::sys_reset();
-                                    }
-                                }
-                            } else {
-                                state = AppState::Menu;
-                                menu::draw_menu(&mut board.display, cursor);
+            // わざメニューでの選択時の特殊な副作用（計測・待機処理）のハンドリング
+            if let Screen::Talk(TalkState::WazaMenu) = prev_screen {
+                if ev == Event::Select {
+                    match model.waza_cursor {
+                        0 => {
+                            // ぜろのはどう：基準値更新
+                            if let Ok(a) = board.accelerometer.accel_norm() {
+                                model = model.update(Event::ZeroHadouExecuted((a.x, a.y, a.z)));
+                                talk::draw_talk_screen(
+                                    &mut board.display,
+                                    model.waza_cursor,
+                                    model.message,
+                                    None,
+                                );
+                                board.delay.delay_ms(800u16);
+                                model.message = None;
                             }
                         }
-                        _ => {}
-                    }
-                }
-                last_direction = direction;
-            }
-
-            // --- 各画面個別の処理 ---
-            AppState::Talk => match talk_state {
-                TalkState::WazaMenu => {
-                    if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::C) {
-                        state = AppState::Menu;
-                        menu::draw_menu(&mut board.display, cursor);
-                    }
-
-                    let direction = board.five_way.read();
-                    let is_new_press = direction.is_some() && last_direction.is_none();
-                    if is_new_press {
-                        match direction {
-                            Some(Direction::Left) | Some(Direction::Up) => {
-                                waza_cursor = if waza_cursor == 0 { 3 } else { waza_cursor - 1 };
-                                talk::draw_talk_screen(&mut board.display, waza_cursor, None, None);
-                            }
-                            Some(Direction::Right) | Some(Direction::Down) => {
-                                waza_cursor = (waza_cursor + 1) % 4;
-                                talk::draw_talk_screen(&mut board.display, waza_cursor, None, None);
-                            }
-                            Some(Direction::Press) => match waza_cursor {
-                                0 => {
-                                    // ぜろのはどう
-                                    if let Ok(a) = board.accelerometer.accel_norm() {
-                                        accel_offset = (a.x, a.y, a.z);
-                                    }
-                                    talk::draw_talk_screen(
-                                        &mut board.display,
-                                        waza_cursor,
-                                        Some("きじゅんち こうしん！"),
-                                        None,
-                                    );
-                                    board.delay.delay_ms(800u16);
-                                    talk::draw_talk_screen(&mut board.display, waza_cursor, None, None);
-                                }
-                                1 => {
-                                    // となえる
-                                    talk::draw_measuring(&mut board.display);
-                                    tonaeru_result = talk::sample_tonaeru(board, accel_offset);
-                                    talk::draw_tonaeru_result(
-                                        &mut board.display,
-                                        tonaeru_result.0,
-                                        tonaeru_result.1,
-                                        tonaeru_result.2,
-                                    );
-                                    result_confirm_cursor = 0;
-                                    talk::draw_result_confirm(&mut board.display, result_confirm_cursor);
-                                    talk_state = TalkState::TonaeruConfirm;
-                                }
-                                2 => {
-                                    // みる
-                                    talk::draw_talk_screen(&mut board.display, waza_cursor, None, Some(2));
-                                    talk_state = TalkState::Miru;
-                                }
-                                _ => {
-                                    // にげる(わざメニューから)
-                                    escape::draw(&mut board.display);
-                                    board.delay.delay_ms(1500u16);
-                                    state = AppState::Menu;
-                                    menu::draw_menu(&mut board.display, cursor);
-                                }
-                            },
-                            _ => {}
+                        1 => {
+                            // となえる：サンプリング実行
+                            talk::draw_measuring(&mut board.display);
+                            let res = talk::sample_tonaeru(board, model.accel_offset);
+                            // サンプリング結果をイベントとしてモデルに渡す
+                            model = model.update(Event::TonaeruCompleted(res));
+                        }
+                        3 => {
+                            // にげる
+                            model.screen = Screen::Escape;
+                            escape::draw(&mut board.display);
+                            board.delay.delay_ms(1500u16);
+                            model.screen = Screen::Menu;
+                        }
+                        _ => {
+                            // 上記以外（カーソル移動や「みる」など）は通常通りモデルを更新
+                            model = model.update(ev);
                         }
                     }
-                    last_direction = direction;
+                } else {
+                    model = model.update(ev);
                 }
-
-                TalkState::Miru => {
-                    talk::update_accel_screen(board, accel_offset, &mut buf);
-
-                    if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::C) {
-                        talk_state = TalkState::WazaMenu;
-                        talk::draw_talk_screen(&mut board.display, waza_cursor, None, None);
-                    }
-                }
-
-                TalkState::TonaeruResult => {
-                    if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::C) {
-                        talk_state = TalkState::WazaMenu;
-                        talk::draw_talk_screen(&mut board.display, waza_cursor, None, None);
-                    }
-                }
-
-                TalkState::TonaeruConfirm => {
-                    let direction = board.five_way.read();
-                    let is_new_press = direction.is_some() && last_direction.is_none();
-                    if is_new_press {
-                        match direction {
-                            Some(Direction::Left) | Some(Direction::Up) => {
-                                result_confirm_cursor = 0;
-                                talk::draw_result_confirm(&mut board.display, result_confirm_cursor);
-                            }
-                            Some(Direction::Right) | Some(Direction::Down) => {
-                                result_confirm_cursor = 1;
-                                talk::draw_result_confirm(&mut board.display, result_confirm_cursor);
-                            }
-                            Some(Direction::Press) => {
-                                if result_confirm_cursor == 0 {
-                                    // もどる
-                                    talk_state = TalkState::WazaMenu;
-                                    talk::draw_talk_screen(&mut board.display, waza_cursor, None, None);
-                                } else {
-                                    // とどまる
-                                    talk::draw_tonaeru_result(
-                                        &mut board.display,
-                                        tonaeru_result.0,
-                                        tonaeru_result.1,
-                                        tonaeru_result.2,
-                                    );
-                                    talk_state = TalkState::TonaeruResult;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    last_direction = direction;
-                }
-            },
-
-            AppState::Status => {
-                if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::C) {
-                    state = AppState::Menu;
-                    menu::draw_menu(&mut board.display, cursor);
-                }
+            } else {
+                // わざメニュー以外では通常通りモデルを更新
+                model = model.update(ev);
             }
 
-            AppState::Magic => {
-                if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::C) {
-                    state = AppState::Menu;
-                    menu::draw_menu(&mut board.display, cursor);
-                }
-            }
+            render(board, &model, &mut buf);
+        }
 
-            AppState::Item => {
-                if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::C) {
-                    state = AppState::Menu;
-                    menu::draw_menu(&mut board.display, cursor);
-                }
-            }
-
-            AppState::Escape => {
-                if board.top_buttons.is_pressed(&mut last_button) == Some(ButtonId::C) {
-                    state = AppState::Menu;
-                    menu::draw_menu(&mut board.display, cursor);
-                }
-            }
+        // 3. リアルタイム更新（「みる」画面での加速度リアルタイム描画）
+        if model.screen == Screen::Talk(TalkState::Miru) {
+            talk::update_accel_screen(board, model.accel_offset, &mut buf);
         }
 
         board.delay.delay_ms(30u16);
+    }
+}
+
+/// 入力デバイスの状態を読み取って Event を生成する関数
+fn poll_input(
+    board: &mut Board,
+    last_direction: &mut Option<Direction>,
+    last_button: &mut Option<ButtonId>,
+) -> Option<Event> {
+    if let Some(dir) = board.five_way.is_pressed(last_direction) {
+        return match dir {
+            Direction::Up => Some(Event::NavigateUp),
+            Direction::Down => Some(Event::NavigateDown),
+            Direction::Left => Some(Event::NavigateLeft),
+            Direction::Right => Some(Event::NavigateRight),
+            Direction::Press => Some(Event::Select),
+        };
+    }
+
+    if let Some(btn) = board.top_buttons.is_pressed(last_button) {
+        return match btn {
+            ButtonId::A => Some(Event::Select),
+            ButtonId::B => Some(Event::NavigateDown),
+            ButtonId::C => Some(Event::Back),
+        };
+    }
+
+    None
+}
+
+/// モデルの状態に応じた描画関数（View）
+fn render(board: &mut Board, model: &Model, _buf: &mut String<64>) {
+    match model.screen {
+        Screen::Menu => {
+            menu::draw_menu(&mut board.display, model.cursor);
+        }
+        Screen::MenuConfirm => {
+            menu::draw_menu(&mut board.display, model.cursor);
+            menu::draw_confirm_dialog(
+                &mut board.display,
+                MENU_ITEMS[model.cursor],
+                model.confirm_cursor,
+            );
+        }
+        Screen::Talk(TalkState::WazaMenu) => {
+            talk::draw_talk_screen(
+                &mut board.display,
+                model.waza_cursor,
+                model.message,
+                None,
+            );
+        }
+        Screen::Talk(TalkState::Miru) => {
+            talk::draw_talk_screen(
+                &mut board.display,
+                model.waza_cursor,
+                None,
+                Some(2), // 「みる中」表示
+            );
+        }
+        Screen::Talk(TalkState::TonaeruResult) => {
+            talk::draw_tonaeru_result(
+                &mut board.display,
+                model.tonaeru_result.0,
+                model.tonaeru_result.1,
+                model.tonaeru_result.2,
+            );
+        }
+        Screen::Talk(TalkState::TonaeruConfirm) => {
+            talk::draw_tonaeru_result(
+                &mut board.display,
+                model.tonaeru_result.0,
+                model.tonaeru_result.1,
+                model.tonaeru_result.2,
+            );
+            talk::draw_result_confirm(&mut board.display, model.result_confirm_cursor);
+        }
+        Screen::Status => status::draw(&mut board.display),
+        Screen::Magic => magic::draw(&mut board.display),
+        Screen::Item => item::draw(&mut board.display),
+        Screen::Escape => escape::draw(&mut board.display),
     }
 }

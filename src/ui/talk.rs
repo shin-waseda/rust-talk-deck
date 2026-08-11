@@ -216,24 +216,60 @@ pub fn draw_result_confirm<D: DrawTarget<Color = Rgb565, Error = impl core::fmt:
     );
 }
 
-/// 3秒間サンプリングし、基準値との差の平均を100倍した整数値を返す
+/// 約1秒間サンプリングし、振った勢い・激しさを反映した 1〜9999 の数値を返す
 pub fn sample_tonaeru(board: &mut Board, accel_offset: (f32, f32, f32)) -> (i32, i32, i32) {
-    let mut sum = (0.0f32, 0.0f32, 0.0f32);
-    let mut count: u32 = 0;
+    let mut energy_x = 0.0f32;
+    let mut energy_y = 0.0f32;
+    let mut energy_z = 0.0f32;
 
+    let mut prev_x = accel_offset.0;
+    let mut prev_y = accel_offset.1;
+    let mut prev_z = accel_offset.2;
+
+    // 約3秒間 (10ms × 100回) サンプリング
     for _ in 0..100 {
         if let Ok(a) = board.accelerometer.accel_norm() {
-            sum.0 += a.x - accel_offset.0;
-            sum.1 += a.y - accel_offset.1;
-            sum.2 += a.z - accel_offset.2;
-            count += 1;
+            // 基準値(accel_offset)からのズレの大きさ（絶対値）
+            let dx = (a.x - accel_offset.0).abs();
+            let dy = (a.y - accel_offset.1).abs();
+            let dz = (a.z - accel_offset.2).abs();
+
+            // 直前フレームからの急激な変化量（一気に振ったときの衝撃）
+            let jerk_x = (a.x - prev_x).abs();
+            let jerk_y = (a.y - prev_y).abs();
+            let jerk_z = (a.z - prev_z).abs();
+
+            // 振れば振るほどエネルギーが加算（積算）される
+            energy_x += dx + jerk_x * 1.5;
+            energy_y += dy + jerk_y * 1.5;
+            energy_z += dz + jerk_z * 1.5;
+
+            prev_x = a.x;
+            prev_y = a.y;
+            prev_z = a.z;
         }
-        board.delay.delay_ms(30u16);
+        board.delay.delay_ms(10u16);
     }
 
-    if count == 0 {
-        return (0, 0, 0);
-    }
-    let n = count as f32;
-    ((sum.0 / n * 100.0) as i32, (sum.1 / n * 100.0) as i32, (sum.2 / n * 100.0) as i32)
+    // -------------------------------------------------------------
+    // あまり（剰余）を使った 1〜9999 のスケーリング計算
+    // -------------------------------------------------------------
+    let calc_value = |energy: f32, axis_seed: u32| -> i32 {
+        // 微小な変化でも全体が大きく動くよう、エネルギーに素数系の大きめの係数を掛ける
+        // axis_seed を使って軸ごとに異なるオフセットを与える
+        let raw = (energy * 1234.567 + (axis_seed * 997) as f32) as u32;
+
+        // 10000 のあまりを取ることで 0 〜 9999 に収める
+        // 1桁(0〜9)、2桁(10〜99)、3桁(100〜999)、4桁(1000〜9999) が均等に現れる
+        let rem = (raw % 10000) as i32;
+
+        // 0を避けて 1〜9999 に補正
+        if rem == 0 { 1 } else { rem }
+    };
+
+    let x = calc_value(energy_x, 1);
+    let y = calc_value(energy_y, 2);
+    let z = calc_value(energy_z, 3);
+
+    (x, y, z)
 }
