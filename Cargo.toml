@@ -1,0 +1,23 @@
+[package]
+name = "talk-deck"
+version = "0.1.0"
+edition = "2024"
+authors = ["sararint"]
+description = "Wio Terminal + Rust project"
+
+[dependencies]
+wio_terminal = { git = "https://github.com/atsamd-rs/atsamd" }
+embedded-graphics = "0.8"
+embedded-hal = "0.2"
+panic-halt = "0.2"
+cortex-m-rt = "0.7.6"
+heapless = "0.8"
+lis3dh = "0.3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
