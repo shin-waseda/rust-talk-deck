@@ -50,6 +50,25 @@ pub enum Event {
     TonaeruCompleted((i32, i32, i32)),
 }
 
+/// ★ 新しく追加: 副作用を明示的に表現
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Effect {
+    /// ぜろのはどう実行：加速度基準値を更新し、メッセージを一時表示して遅延
+    ExecuteZeroHadou,
+    /// となえる実行：サンプリング開始
+    ExecuteTonaeru,
+    /// にげる実行：エスケープ画面表示して遅延
+    ExecuteEscape,
+    /// メッセージクリア
+    ClearMessage,
+}
+
+/// ★ 新しく追加: 更新結果は (新モデル, 副作用) のタプル
+pub struct UpdateResult {
+    pub model: Model,
+    pub effect: Option<Effect>,
+}
+
 impl Model {
     pub fn new() -> Self {
         Self {
@@ -65,135 +84,153 @@ impl Model {
         }
     }
 
-    pub fn update(self, event: Event) -> Self {
-        match (self.screen, event) {
+    /// ★ 修正: 戻り値を UpdateResult に
+    pub fn update(self, event: Event) -> UpdateResult {
+        let (model, effect) = match (self.screen, event) {
             // --- メインメニュー (Screen::Menu) ---
-            (Screen::Menu, Event::NavigateUp) => Self {
+            (Screen::Menu, Event::NavigateUp) => (Self {
                 cursor: if self.cursor == 0 { 4 } else { self.cursor - 1 },
                 ..self
-            },
-            (Screen::Menu, Event::NavigateDown) => Self {
+            }, None),
+            (Screen::Menu, Event::NavigateDown) => (Self {
                 cursor: (self.cursor + 1) % 5,
                 ..self
-            },
-            (Screen::Menu, Event::Select) => Self {
+            }, None),
+            (Screen::Menu, Event::Select) => (Self {
                 screen: Screen::MenuConfirm,
                 confirm_cursor: 0,
                 ..self
-            },
+            }, None),
 
             // --- 確認ダイアログ (Screen::MenuConfirm) ---
-            (Screen::MenuConfirm, Event::NavigateLeft) | (Screen::MenuConfirm, Event::NavigateUp) => Self {
+            (Screen::MenuConfirm, Event::NavigateLeft) | (Screen::MenuConfirm, Event::NavigateUp) => (Self {
                 confirm_cursor: 0,
                 ..self
-            },
-            (Screen::MenuConfirm, Event::NavigateRight) | (Screen::MenuConfirm, Event::NavigateDown) => Self {
+            }, None),
+            (Screen::MenuConfirm, Event::NavigateRight) | (Screen::MenuConfirm, Event::NavigateDown) => (Self {
                 confirm_cursor: 1,
                 ..self
-            },
+            }, None),
             (Screen::MenuConfirm, Event::Select) => {
                 if self.confirm_cursor == 0 {
                     match self.cursor {
-                        0 => Self {
+                        0 => (Self {
                             screen: Screen::Talk(TalkState::WazaMenu),
                             waza_cursor: 0,
                             ..self
-                        },
-                        1 => Self { screen: Screen::Status, ..self },
-                        2 => Self { screen: Screen::Magic, ..self },
-                        3 => Self { screen: Screen::Item, ..self },
-                        _ => Self { screen: Screen::Escape, ..self },
+                        }, None),
+                        1 => (Self { screen: Screen::Status, ..self }, None),
+                        2 => (Self { screen: Screen::Magic, ..self }, None),
+                        3 => (Self { screen: Screen::Item, ..self }, None),
+                        _ => (Self { screen: Screen::Escape, ..self }, None),
                     }
                 } else {
-                    Self { screen: Screen::Menu, ..self }
+                    (Self { screen: Screen::Menu, ..self }, None)
                 }
             },
-            (Screen::MenuConfirm, Event::Back) => Self {
+            (Screen::MenuConfirm, Event::Back) => (Self {
                 screen: Screen::Menu,
                 ..self
-            },
+            }, None),
 
             // --- わざメニュー (Screen::Talk(TalkState::WazaMenu)) ---
-            (Screen::Talk(TalkState::WazaMenu), Event::NavigateUp) | (Screen::Talk(TalkState::WazaMenu), Event::NavigateLeft) => Self {
+            (Screen::Talk(TalkState::WazaMenu), Event::NavigateUp) | (Screen::Talk(TalkState::WazaMenu), Event::NavigateLeft) => (Self {
                 waza_cursor: if self.waza_cursor == 0 { 3 } else { self.waza_cursor - 1 },
                 ..self
-            },
-            (Screen::Talk(TalkState::WazaMenu), Event::NavigateDown) | (Screen::Talk(TalkState::WazaMenu), Event::NavigateRight) => Self {
+            }, None),
+            (Screen::Talk(TalkState::WazaMenu), Event::NavigateDown) | (Screen::Talk(TalkState::WazaMenu), Event::NavigateRight) => (Self {
                 waza_cursor: (self.waza_cursor + 1) % 4,
                 ..self
-            },
+            }, None),
             (Screen::Talk(TalkState::WazaMenu), Event::Select) => match self.waza_cursor {
-                2 => Self {
-                    screen: Screen::Talk(TalkState::Miru),
-                    ..self
-                },
-                _ => self, // 他のわざ (ぜろのはどう, となえる, にげる) は app.rs 側で計測・副作用後にイベントを発行
+                0 => {
+                    // ぜろのはどう: 副作用が必要
+                    (self, Some(Effect::ExecuteZeroHadou))
+                }
+                1 => {
+                    // となえる: 副作用が必要
+                    (self, Some(Effect::ExecuteTonaeru))
+                }
+                2 => {
+                    // みる: 副作用なし
+                    (Self {
+                        screen: Screen::Talk(TalkState::Miru),
+                        ..self
+                    }, None)
+                }
+                3 => {
+                    // にげる: 副作用が必要
+                    (self, Some(Effect::ExecuteEscape))
+                }
+                _ => (self, None),
             },
-            (Screen::Talk(TalkState::WazaMenu), Event::ZeroHadouExecuted(offset)) => Self {
+            (Screen::Talk(TalkState::WazaMenu), Event::ZeroHadouExecuted(offset)) => (Self {
                 accel_offset: offset,
                 message: Some("きじゅんち こうしん！"),
                 ..self
-            },
-            (Screen::Talk(TalkState::WazaMenu), Event::TonaeruCompleted(result)) => Self {
+            }, Some(Effect::ClearMessage)),
+            (Screen::Talk(TalkState::WazaMenu), Event::TonaeruCompleted(result)) => (Self {
                 screen: Screen::Talk(TalkState::TonaeruConfirm),
                 tonaeru_result: result,
                 result_confirm_cursor: 0,
                 ..self
-            },
-            (Screen::Talk(TalkState::TonaeruResult), Event::Select) => Self {
+            }, None),
+            (Screen::Talk(TalkState::TonaeruResult), Event::Select) => (Self {
                 screen: Screen::Talk(TalkState::TonaeruConfirm),
                 result_confirm_cursor: 0,
                 ..self
-            },
+            }, None),
 
             // --- となえる確認 (Screen::Talk(TalkState::TonaeruConfirm)) ---
-            (Screen::Talk(TalkState::TonaeruConfirm), Event::NavigateLeft) | (Screen::Talk(TalkState::TonaeruConfirm), Event::NavigateUp) => Self {
+            (Screen::Talk(TalkState::TonaeruConfirm), Event::NavigateLeft) | (Screen::Talk(TalkState::TonaeruConfirm), Event::NavigateUp) => (Self {
                 screen: Screen::Talk(TalkState::TonaeruConfirm),
                 result_confirm_cursor: 0,
                 ..self
-            },
-            (Screen::Talk(TalkState::TonaeruConfirm), Event::NavigateRight) | (Screen::Talk(TalkState::TonaeruConfirm), Event::NavigateDown) => Self {
+            }, None),
+            (Screen::Talk(TalkState::TonaeruConfirm), Event::NavigateRight) | (Screen::Talk(TalkState::TonaeruConfirm), Event::NavigateDown) => (Self {
                 result_confirm_cursor: 1,
                 ..self
-            },
+            }, None),
             (Screen::Talk(TalkState::TonaeruConfirm), Event::Select) => {
                 if self.result_confirm_cursor == 0 {
                     // もどる
-                    Self { screen: Screen::Talk(TalkState::WazaMenu), ..self }
+                    (Self { screen: Screen::Talk(TalkState::WazaMenu), ..self }, None)
                 } else {
                     // とどまる
-                    Self { screen: Screen::Talk(TalkState::TonaeruResult), ..self }
+                    (Self { screen: Screen::Talk(TalkState::TonaeruResult), ..self }, None)
                 }
             },
             (Screen::Talk(talk_state), Event::Back) => match talk_state {
                 // わざメニューにいる時はメインメニューに戻る
-                TalkState::WazaMenu => Self {
+                TalkState::WazaMenu => (Self {
                     screen: Screen::Menu,
                     ..self
-                },
+                }, None),
                 // 「みる」や「結果表示」などにいる時はわざメニューに戻る
-                TalkState::Miru | TalkState::TonaeruResult | TalkState::TonaeruConfirm => Self {
+                TalkState::Miru | TalkState::TonaeruResult | TalkState::TonaeruConfirm => (Self {
                     screen: Screen::Talk(TalkState::WazaMenu),
                     ..self
-                },
+                }, None),
             },
 
             // --- キャンセル (Back ボタン) による共通の戻り遷移 ---
             (Screen::Status, Event::Back)
             | (Screen::Magic, Event::Back)
             | (Screen::Item, Event::Back)
-            | (Screen::Escape, Event::Back) => Self {
+            | (Screen::Escape, Event::Back) => (Self {
                 screen: Screen::Menu,
                 ..self
-            },
+            }, None),
 
             // センサー値の更新など
-            (_, Event::AccelSampled(Ok(a))) => Self {
+            (_, Event::AccelSampled(Ok(a))) => (Self {
                 accel: Some(a),
                 ..self
-            },
+            }, None),
 
-            _ => self,
-        }
+            _ => (self, None),
+        };
+
+        UpdateResult { model, effect }
     }
 }
