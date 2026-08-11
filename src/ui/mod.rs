@@ -1,5 +1,10 @@
-pub mod accel;
+pub mod talk;
 pub mod menu;
+pub mod status;
+pub mod magic;
+pub mod item;
+pub mod escape;
+pub mod placeholder;
 
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;

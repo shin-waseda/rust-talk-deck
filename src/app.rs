@@ -6,14 +6,18 @@ use wio_terminal::prelude::*;
 
 use crate::drivers::board::Board;
 use crate::drivers::controls::{ButtonId, Direction};
-use crate::ui::accel;
+use crate::ui::{talk, status, magic, item, escape};
 use crate::ui::menu::{self, MENU_ITEMS};
 
 #[derive(Clone, Copy, PartialEq)]
 enum AppState {
     Menu,
-    MenuConfirm, 
-    Accel,
+    MenuConfirm,
+    Talk,   
+    Status, 
+    Magic,  
+    Item,   
+    Escape, 
 }
 
 pub fn run(board: &mut Board) -> ! {
@@ -26,7 +30,7 @@ pub fn run(board: &mut Board) -> ! {
     }
 
     let mut cursor: usize = 0;
-    let mut confirm_cursor: usize = 0; 
+    let mut confirm_cursor: usize = 0;
     let mut state = AppState::Menu;
     let mut last_direction: Option<Direction> = None;
     let mut last_button: Option<ButtonId> = None;
@@ -81,15 +85,30 @@ pub fn run(board: &mut Board) -> ! {
                         }
                         Some(Direction::Press) => {
                             if confirm_cursor == 0 {
-                                if cursor == 0 {
-                                    state = AppState::Accel;
-                                    accel::draw_accel_screen(&mut board.display);
-                                    if let Ok(a) = board.accelerometer.accel_norm() {
-                                        accel_offset = (a.x, a.y, a.z);
+                                match cursor {
+                                    0 => {
+                                        talk::draw_accel_screen(&mut board.display);
+                                        if let Ok(a) = board.accelerometer.accel_norm() {
+                                            accel_offset = (a.x, a.y, a.z);
+                                        }
+                                        state = AppState::Talk;
                                     }
-                                } else {
-                                    state = AppState::Menu;
-                                    menu::draw_menu(&mut board.display, cursor);
+                                    1 => {
+                                        status::draw(&mut board.display);
+                                        state = AppState::Status;
+                                    }
+                                    2 => {
+                                        magic::draw(&mut board.display);
+                                        state = AppState::Magic;
+                                    }
+                                    3 => {
+                                        item::draw(&mut board.display);
+                                        state = AppState::Item;
+                                    }
+                                    _ => {
+                                        escape::draw(&mut board.display);
+                                        state = AppState::Escape;
+                                    }
                                 }
                             } else {
                                 state = AppState::Menu;
@@ -102,7 +121,7 @@ pub fn run(board: &mut Board) -> ! {
                 last_direction = direction;
             }
 
-            AppState::Accel => {
+            AppState::Talk => {
                 buf.clear();
                 match board.accelerometer.accel_norm() {
                     Ok(a) => {
@@ -115,7 +134,7 @@ pub fn run(board: &mut Board) -> ! {
                         let _ = write!(buf, "read error");
                     }
                 }
-                accel::draw_accel_value(&mut board.display, &buf);
+                talk::draw_accel_value(&mut board.display, &buf);
 
                 let button = board.top_buttons.read();
                 let is_new_button = button.is_some() && last_button.is_none();
@@ -125,8 +144,73 @@ pub fn run(board: &mut Board) -> ! {
                 }
                 last_button = button;
             }
+
+            // --- 各画面個別の処理 ---
+            AppState::Status => {
+                if tick_status(board, &mut last_button) {
+                    state = AppState::Menu;
+                    menu::draw_menu(&mut board.display, cursor);
+                }
+            }
+
+            AppState::Magic => {
+                if tick_magic(board, &mut last_button) {
+                    state = AppState::Menu;
+                    menu::draw_menu(&mut board.display, cursor);
+                }
+            }
+
+            AppState::Item => {
+                if tick_item(board, &mut last_button) {
+                    state = AppState::Menu;
+                    menu::draw_menu(&mut board.display, cursor);
+                }
+            }
+
+            AppState::Escape => {
+                if tick_escape(board, &mut last_button) {
+                    state = AppState::Menu;
+                    menu::draw_menu(&mut board.display, cursor);
+                }
+            }
         }
 
         board.delay.delay_ms(30u16);
     }
+}
+
+// ==========================================
+// 各画面ごとの個別処理 (空箱関数)
+// ==========================================
+
+fn tick_status(board: &mut Board, last_button: &mut Option<ButtonId>) -> bool {
+    // ここに「じょうたい」画面独自の入力・更新処理を書いていく
+    let button = board.top_buttons.read();
+    let is_new_button = button.is_some() && *last_button == None;
+    *last_button = button;
+    is_new_button && button == Some(ButtonId::A) // true でメニューに戻る
+}
+
+fn tick_magic(board: &mut Board, last_button: &mut Option<ButtonId>) -> bool {
+    // ここに「まほう」画面独自の入力・更新処理を書いていく
+    let button = board.top_buttons.read();
+    let is_new_button = button.is_some() && *last_button == None;
+    *last_button = button;
+    is_new_button && button == Some(ButtonId::A)
+}
+
+fn tick_item(board: &mut Board, last_button: &mut Option<ButtonId>) -> bool {
+    // ここに「どうぐ」画面独自の入力・更新処理を書いていく
+    let button = board.top_buttons.read();
+    let is_new_button = button.is_some() && *last_button == None;
+    *last_button = button;
+    is_new_button && button == Some(ButtonId::A)
+}
+
+fn tick_escape(board: &mut Board, last_button: &mut Option<ButtonId>) -> bool {
+    // ここに「にげる」画面独自の入力・更新処理を書いていく
+    let button = board.top_buttons.read();
+    let is_new_button = button.is_some() && *last_button == None;
+    *last_button = button;
+    is_new_button && button == Some(ButtonId::A)
 }
