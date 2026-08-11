@@ -106,8 +106,9 @@ pub fn run(board: &mut Board) -> ! {
                                         state = AppState::Item;
                                     }
                                     _ => {
-                                        escape::draw(&mut board.display);
-                                        state = AppState::Escape;
+                                            escape::draw(&mut board.display);
+                                            board.delay.delay_ms(2000u16); 
+                                            cortex_m::peripheral::SCB::sys_reset();
                                     }
                                 }
                             } else {

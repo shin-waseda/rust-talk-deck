@@ -14,6 +14,7 @@ cortex-m-rt = "0.7.6"
 heapless = "0.8"
 lis3dh = "0.3"
 u8g2-fonts = "0.5"
+cortex-m = "0.7"
 
 [profile.release]
 opt-level = "s"
