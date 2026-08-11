@@ -50,7 +50,6 @@ pub enum Event {
     TonaeruCompleted((i32, i32, i32)),
 }
 
-/// ★ 新しく追加: 副作用を明示的に表現
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Effect {
     /// ぜろのはどう実行：加速度基準値を更新し、メッセージを一時表示して遅延
@@ -59,11 +58,12 @@ pub enum Effect {
     ExecuteTonaeru,
     /// にげる実行：エスケープ画面表示して遅延
     ExecuteEscape,
+    /// システムリセット（メインメニューの「にげる」）
+    SystemReset,
     /// メッセージクリア
     ClearMessage,
 }
 
-/// ★ 新しく追加: 更新結果は (新モデル, 副作用) のタプル
 pub struct UpdateResult {
     pub model: Model,
     pub effect: Option<Effect>,
@@ -84,7 +84,6 @@ impl Model {
         }
     }
 
-    /// ★ 修正: 戻り値を UpdateResult に
     pub fn update(self, event: Event) -> UpdateResult {
         let (model, effect) = match (self.screen, event) {
             // --- メインメニュー (Screen::Menu) ---
@@ -114,15 +113,14 @@ impl Model {
             (Screen::MenuConfirm, Event::Select) => {
                 if self.confirm_cursor == 0 {
                     match self.cursor {
-                        0 => (Self {
-                            screen: Screen::Talk(TalkState::WazaMenu),
-                            waza_cursor: 0,
-                            ..self
-                        }, None),
+                        0 => (Self { screen: Screen::Talk(TalkState::WazaMenu), waza_cursor: 0, ..self }, None),
                         1 => (Self { screen: Screen::Status, ..self }, None),
                         2 => (Self { screen: Screen::Magic, ..self }, None),
                         3 => (Self { screen: Screen::Item, ..self }, None),
-                        _ => (Self { screen: Screen::Escape, ..self }, None),
+                        _ => (
+                            Self { screen: Screen::Escape, ..self },
+                            Some(Effect::SystemReset), // ★ メインメニューからの逃走はシステムリセット
+                        ),
                     }
                 } else {
                     (Self { screen: Screen::Menu, ..self }, None)
@@ -143,32 +141,20 @@ impl Model {
                 ..self
             }, None),
             (Screen::Talk(TalkState::WazaMenu), Event::Select) => match self.waza_cursor {
-                0 => {
-                    // ぜろのはどう: 副作用が必要
-                    (self, Some(Effect::ExecuteZeroHadou))
-                }
-                1 => {
-                    // となえる: 副作用が必要
-                    (self, Some(Effect::ExecuteTonaeru))
-                }
-                2 => {
-                    // みる: 副作用なし
-                    (Self {
-                        screen: Screen::Talk(TalkState::Miru),
-                        ..self
-                    }, None)
-                }
-                3 => {
-                    // にげる: 副作用が必要
-                    (self, Some(Effect::ExecuteEscape))
-                }
+                0 => (self, Some(Effect::ExecuteZeroHadou)),
+                1 => (self, Some(Effect::ExecuteTonaeru)),
+                2 => (Self {
+                    screen: Screen::Talk(TalkState::Miru),
+                    ..self
+                }, None),
+                3 => (self, Some(Effect::ExecuteEscape)), // ★ わざメニューからの逃走は ExecuteEscape
                 _ => (self, None),
             },
             (Screen::Talk(TalkState::WazaMenu), Event::ZeroHadouExecuted(offset)) => (Self {
                 accel_offset: offset,
                 message: Some("きじゅんち こうしん！"),
                 ..self
-            }, Some(Effect::ClearMessage)),
+            }, None), // ★ Effect::ClearMessage を削除
             (Screen::Talk(TalkState::WazaMenu), Event::TonaeruCompleted(result)) => (Self {
                 screen: Screen::Talk(TalkState::TonaeruConfirm),
                 tonaeru_result: result,
@@ -183,7 +169,6 @@ impl Model {
 
             // --- となえる確認 (Screen::Talk(TalkState::TonaeruConfirm)) ---
             (Screen::Talk(TalkState::TonaeruConfirm), Event::NavigateLeft) | (Screen::Talk(TalkState::TonaeruConfirm), Event::NavigateUp) => (Self {
-                screen: Screen::Talk(TalkState::TonaeruConfirm),
                 result_confirm_cursor: 0,
                 ..self
             }, None),
@@ -193,8 +178,8 @@ impl Model {
             }, None),
             (Screen::Talk(TalkState::TonaeruConfirm), Event::Select) => {
                 if self.result_confirm_cursor == 0 {
-                    // もどる
-                    (Self { screen: Screen::Talk(TalkState::WazaMenu), ..self }, None)
+                    // もどる：技メニューへ戻る際にメッセージを消去
+                    (Self { screen: Screen::Talk(TalkState::WazaMenu), message: None, ..self }, None)
                 } else {
                     // とどまる
                     (Self { screen: Screen::Talk(TalkState::TonaeruResult), ..self }, None)
@@ -204,11 +189,13 @@ impl Model {
                 // わざメニューにいる時はメインメニューに戻る
                 TalkState::WazaMenu => (Self {
                     screen: Screen::Menu,
+                    message: None,
                     ..self
                 }, None),
                 // 「みる」や「結果表示」などにいる時はわざメニューに戻る
                 TalkState::Miru | TalkState::TonaeruResult | TalkState::TonaeruConfirm => (Self {
                     screen: Screen::Talk(TalkState::WazaMenu),
+                    message: None,
                     ..self
                 }, None),
             },
@@ -219,6 +206,7 @@ impl Model {
             | (Screen::Item, Event::Back)
             | (Screen::Escape, Event::Back) => (Self {
                 screen: Screen::Menu,
+                message: None,
                 ..self
             }, None),
 

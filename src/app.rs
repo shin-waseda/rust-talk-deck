@@ -5,7 +5,7 @@ use wio_terminal::prelude::*;
 
 use crate::drivers::board::Board;
 use crate::drivers::controls::{ButtonId, Direction};
-use crate::model::{Event, Model, Screen, TalkState};
+use crate::model::{Effect, Event, Model, Screen, TalkState};
 use crate::ui::menu::{self, MENU_ITEMS};
 use crate::ui::{escape, item, magic, status, talk};
 
@@ -33,53 +33,60 @@ pub fn run(board: &mut Board) -> ! {
 
         // 2. モデル更新と副作用の実行
         if let Some(ev) = event {
-            let prev_screen = model.screen; // ★ 更新前の画面を保持
+            // イベントを発行して「更新後のモデル」と「実行すべき副作用(Effect)」を取得
+            let res = model.update(ev);
+            model = res.model;
 
-            // わざメニューでの選択時の特殊な副作用（計測・待機処理）のハンドリング
-            if let Screen::Talk(TalkState::WazaMenu) = prev_screen {
-                if ev == Event::Select {
-                    match model.waza_cursor {
-                        0 => {
-                            // ぜろのはどう：基準値更新
-                            if let Ok(a) = board.accelerometer.accel_norm() {
-                                model = model.update(Event::ZeroHadouExecuted((a.x, a.y, a.z)));
-                                talk::draw_talk_screen(
-                                    &mut board.display,
-                                    model.waza_cursor,
-                                    model.message,
-                                    None,
-                                );
-                                board.delay.delay_ms(800u16);
-                                model.message = None;
-                            }
-                        }
-                        1 => {
-                            // となえる：サンプリング実行
-                            talk::draw_measuring(&mut board.display);
-                            let res = talk::sample_tonaeru(board, model.accel_offset);
-                            // サンプリング結果をイベントとしてモデルに渡す
-                            model = model.update(Event::TonaeruCompleted(res));
-                        }
-                        3 => {
-                            // にげる
-                            model.screen = Screen::Escape;
-                            escape::draw(&mut board.display);
-                            board.delay.delay_ms(1500u16);
-                            model.screen = Screen::Menu;
-                        }
-                        _ => {
-                            // 上記以外（カーソル移動や「みる」など）は通常通りモデルを更新
-                            model = model.update(ev);
+            // 副作用が存在する場合の処理ハンドリング
+            if let Some(effect) = res.effect {
+                match effect {
+                    Effect::ExecuteZeroHadou => {
+                        // ぜろのはどう：基準値更新
+                        if let Ok(a) = board.accelerometer.accel_norm() {
+                            let res = model.update(Event::ZeroHadouExecuted((a.x, a.y, a.z)));
+                            model = res.model;
+
+                            // 更新後のメッセージ（「きじゅんち こうしん！」）を反映して描画
+                            render(board, &model, &mut buf);
+                            board.delay.delay_ms(800u16);
+
+                            model.message = None;
+                            render(board, &model, &mut buf);
                         }
                     }
-                } else {
-                    model = model.update(ev);
+                    Effect::ExecuteTonaeru => {
+                        // となえる：サンプリング実行
+                        talk::draw_measuring(&mut board.display);
+                        let sample_res = talk::sample_tonaeru(board, model.accel_offset);
+                        // サンプリング結果をイベントとしてモデルに渡す
+                        let res = model.update(Event::TonaeruCompleted(sample_res));
+                        model = res.model;
+                    }
+                    Effect::ExecuteEscape => {
+                        // にげる
+                        model.screen = Screen::Escape;
+                        escape::draw(&mut board.display);
+                        board.delay.delay_ms(1500u16);
+                        let res = model.update(Event::Back);
+                        model = res.model;
+                    }
+                    Effect::SystemReset => {
+                        // 【メインメニューの「にげる」】
+                        // 画面を表示して、ハードリセットをかける
+                        render(board, &model, &mut buf);
+                        board.delay.delay_ms(1500u16);
+                        
+                        // システム再起動
+                        cortex_m::peripheral::SCB::sys_reset();
+                    }
+                    Effect::ClearMessage => {
+                        // メッセージクリア要求時
+                        model.message = None;
+                    }
                 }
-            } else {
-                // わざメニュー以外では通常通りモデルを更新
-                model = model.update(ev);
             }
 
+            // 最終状態の描画
             render(board, &model, &mut buf);
         }
 
