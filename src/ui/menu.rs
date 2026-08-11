@@ -9,7 +9,7 @@ use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
 use super::{clear_screen, JP_FONT};
 
-pub const MENU_ITEMS: [&str; 5] = ["はなす", "ステータス", "まほう", "どうぐ", "にげる"];
+pub const MENU_ITEMS: [&str; 5] = ["はなす", "じょうたい", "まほう", "どうぐ", "にげる"];
 
 pub fn draw_splash<D: DrawTarget<Color = Rgb565>>(display: &mut D) {
     clear_screen(display);
