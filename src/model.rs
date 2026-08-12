@@ -17,11 +17,12 @@ pub enum TalkState {
     TonaeruConfirm,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct AccelReading {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum WazaCommand {
+    ZeroHadou,
+    Tonaeru,
+    Miru,
+    Nigeru,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -31,7 +32,6 @@ pub struct Model {
     pub confirm_cursor: usize,
     pub waza_cursor: usize,
     pub result_confirm_cursor: usize,
-    pub accel: Option<AccelReading>,
     pub accel_offset: (f32, f32, f32),
     pub tonaeru_result: (i32, i32, i32),
     pub message: Option<&'static str>,
@@ -45,7 +45,7 @@ pub enum Event {
     NavigateRight,
     Select,
     Back,
-    AccelSampled(Result<AccelReading, ()>),
+    ClearMessage, 
     ZeroHadouExecuted((f32, f32, f32)),
     TonaeruCompleted((i32, i32, i32)),
 }
@@ -60,8 +60,6 @@ pub enum Effect {
     ExecuteEscape,
     /// システムリセット（メインメニューの「にげる」）
     SystemReset,
-    /// メッセージクリア
-    ClearMessage,
 }
 
 pub struct UpdateResult {
@@ -77,7 +75,6 @@ impl Model {
             confirm_cursor: 0,
             waza_cursor: 0,
             result_confirm_cursor: 0,
-            accel: None,
             accel_offset: (0.0, 0.0, 0.0),
             tonaeru_result: (0, 0, 0),
             message: None,
@@ -140,21 +137,23 @@ impl Model {
                 waza_cursor: (self.waza_cursor + 1) % 4,
                 ..self
             }, None),
-            (Screen::Talk(TalkState::WazaMenu), Event::Select) => match self.waza_cursor {
-                0 => (self, Some(Effect::ExecuteZeroHadou)),
-                1 => (self, Some(Effect::ExecuteTonaeru)),
-                2 => (Self {
+            (Screen::Talk(TalkState::WazaMenu), Event::Select) => match WazaCommand::from_index(self.waza_cursor) {
+                WazaCommand::ZeroHadou => (self, Some(Effect::ExecuteZeroHadou)),
+                WazaCommand::Tonaeru => (self, Some(Effect::ExecuteTonaeru)),
+                WazaCommand::Miru => (Self {
                     screen: Screen::Talk(TalkState::Miru),
                     ..self
                 }, None),
-                3 => (self, Some(Effect::ExecuteEscape)), // ★ わざメニューからの逃走は ExecuteEscape
-                _ => (self, None),
+                WazaCommand::Nigeru => (
+                    Self { screen: Screen::Escape, ..self }, // ★ここでもうEscapeに遷移させる
+                    Some(Effect::ExecuteEscape),
+                ),
             },
             (Screen::Talk(TalkState::WazaMenu), Event::ZeroHadouExecuted(offset)) => (Self {
                 accel_offset: offset,
                 message: Some("きじゅんち こうしん！"),
                 ..self
-            }, None), // ★ Effect::ClearMessage を削除
+            }, None),
             (Screen::Talk(TalkState::WazaMenu), Event::TonaeruCompleted(result)) => (Self {
                 screen: Screen::Talk(TalkState::TonaeruConfirm),
                 tonaeru_result: result,
@@ -164,6 +163,10 @@ impl Model {
             (Screen::Talk(TalkState::TonaeruResult), Event::Select) => (Self {
                 screen: Screen::Talk(TalkState::TonaeruConfirm),
                 result_confirm_cursor: 0,
+                ..self
+            }, None),
+            (Screen::Talk(TalkState::WazaMenu), Event::ClearMessage) => (Self {
+                message: None,
                 ..self
             }, None),
 
@@ -210,15 +213,38 @@ impl Model {
                 ..self
             }, None),
 
-            // センサー値の更新など
-            (_, Event::AccelSampled(Ok(a))) => (Self {
-                accel: Some(a),
-                ..self
-            }, None),
+
 
             _ => (self, None),
         };
 
         UpdateResult { model, effect }
+    }
+}
+
+
+impl WazaCommand {
+    pub const ALL: [WazaCommand; 4] = [Self::ZeroHadou, Self::Tonaeru, Self::Miru, Self::Nigeru];
+
+    pub fn from_index(i: usize) -> Self {
+        Self::ALL[i % Self::ALL.len()]
+    }
+
+    /// 通常時の表示ラベル
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ZeroHadou => "ぜろのはどう",
+            Self::Tonaeru => "となえる",
+            Self::Miru => "みる",
+            Self::Nigeru => "にげる",
+        }
+    }
+
+    /// 実行中の表示ラベル(今のところ「みる」だけ特別表示)
+    pub fn executing_label(self) -> &'static str {
+        match self {
+            Self::Miru => "みる中",
+            other => other.label(),
+        }
     }
 }

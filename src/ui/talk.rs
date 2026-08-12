@@ -14,18 +14,11 @@ use wio_terminal::prelude::*;
 
 use super::{clear_screen, JP_FONT};
 use crate::drivers::board::Board;
-
-pub fn draw_accel_screen<D: DrawTarget<Color = Rgb565>>(display: &mut D) {
-    clear_screen(display);
-    let text_style = MonoTextStyle::new(&FONT_9X15, Rgb565::WHITE);
-    let _ = Text::with_baseline("Accelerometer", Point::new(20, 60), text_style, Baseline::Top)
-        .draw(display);
-}
+use crate::model::WazaCommand;
 
 pub fn draw_accel_value<D: DrawTarget<Color = Rgb565>>(display: &mut D, text: &str) {
     let clear_style = PrimitiveStyleBuilder::new().fill_color(Rgb565::BLACK).build();
     let text_style = MonoTextStyle::new(&FONT_9X15, Rgb565::WHITE);
-    // 見出しのすぐ下 (y: 95) に配置
     let _ = Rectangle::new(Point::new(20, 95), Size::new(280, 20))
         .into_styled(clear_style)
         .draw(display);
@@ -58,7 +51,7 @@ pub fn draw_talk_screen<D: DrawTarget<Color = Rgb565, Error = impl core::fmt::De
     display: &mut D,
     waza_cursor: usize,
     message: Option<&str>,
-    executing: Option<usize>,
+    executing: Option<WazaCommand>, 
 ) {
     clear_screen(display);
 
@@ -83,7 +76,7 @@ pub fn draw_talk_screen<D: DrawTarget<Color = Rgb565, Error = impl core::fmt::De
 fn draw_waza_box<D: DrawTarget<Color = Rgb565, Error = impl core::fmt::Debug>>(
     display: &mut D,
     confirm_cursor: usize,
-    executing: Option<usize>,
+    executing: Option<WazaCommand>, 
 ) {
     let window_x = 10;
     let window_y = 130;
@@ -114,17 +107,15 @@ fn draw_waza_box<D: DrawTarget<Color = Rgb565, Error = impl core::fmt::Debug>>(
         display,
     );
 
-    let commands = ["ぜろのはどう", "となえる", "みる", "にげる"];
     let item_start_y = window_y + 30;
     let line_height = 18;
 
-    for (i, cmd) in commands.iter().enumerate() {
+    for (i, cmd) in WazaCommand::ALL.iter().enumerate() {
         let y = item_start_y + (i as i32 * line_height);
         let is_selected = i == confirm_cursor;
-        let is_executing = executing == Some(i);
+        let is_executing = executing == Some(*cmd);
 
-        // みる実行中だけラベルを「みる中」に差し替え
-        let label: &str = if is_executing { "みる中" } else { cmd };
+        let label: &str = if is_executing { cmd.executing_label() } else { cmd.label() };
 
         let cursor_mark = if is_selected { ">" } else { " " };
         let text_style = if is_selected { yellow_style } else { white_style };

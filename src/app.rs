@@ -5,7 +5,7 @@ use wio_terminal::prelude::*;
 
 use crate::drivers::board::Board;
 use crate::drivers::controls::{ButtonId, Direction};
-use crate::model::{Effect, Event, Model, Screen, TalkState};
+use crate::model::{Effect, Event, Model, Screen, TalkState, WazaCommand};
 use crate::ui::menu::{self, MENU_ITEMS};
 use crate::ui::{escape, item, magic, status, talk};
 
@@ -41,16 +41,15 @@ pub fn run(board: &mut Board) -> ! {
             if let Some(effect) = res.effect {
                 match effect {
                     Effect::ExecuteZeroHadou => {
-                        // ぜろのはどう：基準値更新
                         if let Ok(a) = board.accelerometer.accel_norm() {
                             let res = model.update(Event::ZeroHadouExecuted((a.x, a.y, a.z)));
                             model = res.model;
 
-                            // 更新後のメッセージ（「きじゅんち こうしん！」）を反映して描画
                             render(board, &model, &mut buf);
                             board.delay.delay_ms(800u16);
 
-                            model.message = None;
+                            let res = model.update(Event::ClearMessage); // ★直接代入をやめてupdate経由に
+                            model = res.model;
                             render(board, &model, &mut buf);
                         }
                     }
@@ -63,9 +62,7 @@ pub fn run(board: &mut Board) -> ! {
                         model = res.model;
                     }
                     Effect::ExecuteEscape => {
-                        // にげる
-                        model.screen = Screen::Escape;
-                        escape::draw(&mut board.display);
+                        render(board, &model, &mut buf); 
                         board.delay.delay_ms(1500u16);
                         let res = model.update(Event::Back);
                         model = res.model;
@@ -78,10 +75,6 @@ pub fn run(board: &mut Board) -> ! {
                         
                         // システム再起動
                         cortex_m::peripheral::SCB::sys_reset();
-                    }
-                    Effect::ClearMessage => {
-                        // メッセージクリア要求時
-                        model.message = None;
                     }
                 }
             }
@@ -153,7 +146,7 @@ fn render(board: &mut Board, model: &Model, _buf: &mut String<64>) {
                 &mut board.display,
                 model.waza_cursor,
                 None,
-                Some(2), // 「みる中」表示
+                Some(WazaCommand::Miru),
             );
         }
         Screen::Talk(TalkState::TonaeruResult) => {
