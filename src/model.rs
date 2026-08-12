@@ -222,7 +222,6 @@ impl Model {
     }
 }
 
-
 impl WazaCommand {
     pub const ALL: [WazaCommand; 4] = [Self::ZeroHadou, Self::Tonaeru, Self::Miru, Self::Nigeru];
 
