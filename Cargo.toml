@@ -9,6 +9,7 @@ description = "Wio Terminal + Rust project"
 wio_terminal = { git = "https://github.com/atsamd-rs/atsamd" }
 embedded-graphics = "0.8"
 embedded-hal = "0.2"
+embedded-sdmmc = "0.8"
 panic-halt = "0.2"
 cortex-m-rt = "0.7.6"
 heapless = "0.8"

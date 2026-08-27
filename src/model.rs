@@ -25,7 +25,7 @@ pub enum WazaCommand {
     Nigeru,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Model {
     pub screen: Screen,
     pub cursor: usize,
@@ -34,10 +34,11 @@ pub struct Model {
     pub result_confirm_cursor: usize,
     pub accel_offset: (f32, f32, f32),
     pub tonaeru_result: (i32, i32, i32),
+    pub tonaeru_words: [heapless::String<64>; 3],
     pub message: Option<&'static str>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     NavigateUp,
     NavigateDown,
@@ -45,9 +46,9 @@ pub enum Event {
     NavigateRight,
     Select,
     Back,
-    ClearMessage, 
+    ClearMessage,
     ZeroHadouExecuted((f32, f32, f32)),
-    TonaeruCompleted((i32, i32, i32)),
+    TonaeruCompleted { result: (i32, i32, i32), words: [heapless::String<64>; 3] },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -78,6 +79,7 @@ impl Model {
             accel_offset: (0.0, 0.0, 0.0),
             tonaeru_result: (0, 0, 0),
             message: None,
+            tonaeru_words: [heapless::String::new(), heapless::String::new(), heapless::String::new()],
         }
     }
 
@@ -154,9 +156,10 @@ impl Model {
                 message: Some("きじゅんち こうしん！"),
                 ..self
             }, None),
-            (Screen::Talk(TalkState::WazaMenu), Event::TonaeruCompleted(result)) => (Self {
+            (Screen::Talk(TalkState::WazaMenu), Event::TonaeruCompleted { result, words }) => (Self {
                 screen: Screen::Talk(TalkState::TonaeruConfirm),
                 tonaeru_result: result,
+                tonaeru_words: words,
                 result_confirm_cursor: 0,
                 ..self
             }, None),

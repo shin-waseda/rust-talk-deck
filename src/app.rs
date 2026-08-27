@@ -54,11 +54,28 @@ pub fn run(board: &mut Board) -> ! {
                         }
                     }
                     Effect::ExecuteTonaeru => {
-                        // となえる：サンプリング実行
                         talk::draw_measuring(&mut board.display);
                         let sample_res = talk::sample_tonaeru(board, model.accel_offset);
-                        // サンプリング結果をイベントとしてモデルに渡す
-                        let res = model.update(Event::TonaeruCompleted(sample_res));
+
+                        // word.idx には 10000 語 + 1 の番兵(ファイル末尾)が入っている。
+                        // 実際に使う単語の有効インデックスは 0..9999 である。
+                        const WORD_COUNT: u32 = 10_000;
+                        let mut words: [String<64>; 3] = [String::new(), String::new(), String::new()];
+                        let indices = [
+                            (sample_res.0.max(0) as u32) % WORD_COUNT,
+                            (sample_res.1.max(0) as u32) % WORD_COUNT,
+                            (sample_res.2.max(0) as u32) % WORD_COUNT,
+                        ];
+
+                        if talk::lookup_words(board, indices, &mut words).is_err() {
+                            let fallback = ["ビットフィールド", "重ね探索", "スライドパッド"];
+                            for (item, word) in words.iter_mut().zip(fallback.iter()) {
+                                item.clear();
+                                let _ = item.push_str(word);
+                            }
+                        }
+
+                        let res = model.update(Event::TonaeruCompleted { result: sample_res, words });
                         model = res.model;
                     }
                     Effect::ExecuteEscape => {
@@ -150,20 +167,10 @@ fn render(board: &mut Board, model: &Model, _buf: &mut String<64>) {
             );
         }
         Screen::Talk(TalkState::TonaeruResult) => {
-            talk::draw_tonaeru_result(
-                &mut board.display,
-                model.tonaeru_result.0,
-                model.tonaeru_result.1,
-                model.tonaeru_result.2,
-            );
+            talk::draw_tonaeru_result(&mut board.display, model.tonaeru_result, &model.tonaeru_words);
         }
         Screen::Talk(TalkState::TonaeruConfirm) => {
-            talk::draw_tonaeru_result(
-                &mut board.display,
-                model.tonaeru_result.0,
-                model.tonaeru_result.1,
-                model.tonaeru_result.2,
-            );
+            talk::draw_tonaeru_result(&mut board.display, model.tonaeru_result, &model.tonaeru_words);
             talk::draw_result_confirm(&mut board.display, model.result_confirm_cursor);
         }
         Screen::Status => status::draw(&mut board.display),

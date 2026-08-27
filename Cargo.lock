@@ -815,6 +815,7 @@ dependencies = [
  "cortex-m-rt",
  "embedded-graphics",
  "embedded-hal 0.2.7",
+ "embedded-sdmmc",
  "heapless",
  "libm",
  "lis3dh",

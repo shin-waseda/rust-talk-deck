@@ -8,6 +8,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle, StrokeAlignment};
 use embedded_graphics::text::{Baseline, Text};
 
+use embedded_sdmmc::{Mode, VolumeIdx};
+
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use wio_terminal::accelerometer::Accelerometer;
 use wio_terminal::prelude::*;
@@ -156,16 +158,31 @@ pub fn draw_measuring<D: DrawTarget<Color = Rgb565, Error = impl core::fmt::Debu
 
 pub fn draw_tonaeru_result<D: DrawTarget<Color = Rgb565, Error = impl core::fmt::Debug>>(
     display: &mut D,
-    x: i32,
-    y: i32,
-    z: i32,
+    result: (i32, i32, i32),
+    words: &[String<64>; 3],
 ) {
     clear_screen(display);
-    let mut buf: String<64> = String::new();
-    let _ = write!(buf, "x:{} y:{} z:{}", x, y, z);
     let text_style = MonoTextStyle::new(&FONT_9X15, Rgb565::WHITE);
-    let _ = Text::with_baseline(&buf, Point::new(40, 100), text_style, Baseline::Top)
-        .draw(display);
+    let labels = ["x", "y", "z"];
+    let values = [result.0, result.1, result.2];
+
+    for i in 0..3 {
+        let mut label_buf: String<32> = String::new();
+        let _ = write!(label_buf, "{}: {}", labels[i], values[i]);
+
+        let y = 90 + (i as i32) * 22;
+        let _ = Text::with_baseline(&label_buf, Point::new(30, y), text_style, Baseline::Top)
+            .draw(display);
+
+        let _ = JP_FONT.render_aligned(
+            words[i].as_str(),
+            Point::new(110, y),
+            VerticalPosition::Top,
+            HorizontalAlignment::Left,
+            FontColor::Transparent(Rgb565::WHITE),
+            display,
+        );
+    }
 }
 
 pub fn draw_result_confirm<D: DrawTarget<Color = Rgb565, Error = impl core::fmt::Debug>>(
@@ -285,4 +302,64 @@ pub fn sample_tonaeru(board: &mut Board, accel_offset: (f32, f32, f32)) -> (i32,
     let z = calc_value(max_diff_z, max_jerk_z, 3);
 
     (x, y, z)
+}
+
+/// SDカードから、3つのindexに対応する単語をまとめて取り出す
+pub fn lookup_words(board: &mut Board, indices: [u32; 3], out: &mut [String<64>; 3]) -> Result<(), ()> {
+    let mut volume = board.sd_card.open_volume(VolumeIdx(0)).map_err(|_| ())?;
+    let mut root_dir = volume.open_root_dir().map_err(|_| ())?;
+
+    let mut offsets = [(0u32, 0u32); 3];
+
+    // ① word.idx を開いて読んで速やかに閉じる
+    {
+        let mut idx_file = root_dir.open_file_in_dir("word.idx", Mode::ReadOnly).map_err(|_| ())?;
+        for (i, &index) in indices.iter().enumerate() {
+            // word.idx の有効範囲は 0..9999。10000 はファイル末尾の番兵。
+            if index >= 10_000u32 {
+                return Err(());
+            }
+
+            let mut start_bytes = [0u8; 4];
+            let mut end_bytes = [0u8; 4];
+            idx_file.seek_from_start(index * 4).map_err(|_| ())?;
+            idx_file.read(&mut start_bytes).map_err(|_| ())?;
+            idx_file.seek_from_start((index + 1) * 4).map_err(|_| ())?;
+            idx_file.read(&mut end_bytes).map_err(|_| ())?;
+            offsets[i] = (u32::from_le_bytes(start_bytes), u32::from_le_bytes(end_bytes));
+        }
+        // ここで idx_file がドロップされて閉じる
+    }
+
+    // ② word.txt を開いて読んで速やかに閉じる
+    {
+        let mut word_file = root_dir.open_file_in_dir("word.txt", Mode::ReadOnly).map_err(|_| ())?;
+        for (i, &(start, end)) in offsets.iter().enumerate() {
+            let len = (end.saturating_sub(start) as usize).min(64);
+            let mut word_buf = [0u8; 64];
+            word_file.seek_from_start(start).map_err(|_| ())?;
+            let n = word_file.read(&mut word_buf[..len]).map_err(|_| ())?;
+
+            let valid_len = if n == 0 {
+                0
+            } else {
+                let mut valid = n;
+                while valid > 0 && core::str::from_utf8(&word_buf[..valid]).is_err() {
+                    valid -= 1;
+                }
+                valid
+            };
+
+            if valid_len == 0 {
+                return Err(());
+            }
+
+            let s = core::str::from_utf8(&word_buf[..valid_len]).map_err(|_| ())?;
+            out[i].clear();
+            out[i].push_str(s.trim()).map_err(|_| ())?;
+        }
+        // ここで word_file がドロップされて閉じる
+    }
+
+    Ok(())
 }
